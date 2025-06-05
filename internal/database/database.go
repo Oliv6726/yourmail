@@ -58,7 +58,7 @@ func (db *DB) migrate() error {
 			updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 		)`,
 
-		// Messages table
+		// Messages table with threading support
 		`CREATE TABLE IF NOT EXISTS messages (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
 			from_user_id INTEGER,
@@ -67,11 +67,34 @@ func (db *DB) migrate() error {
 			to_address TEXT NOT NULL,
 			subject TEXT NOT NULL,
 			body TEXT NOT NULL,
+			is_html BOOLEAN DEFAULT FALSE,
+			thread_id TEXT,
+			parent_id INTEGER,
 			read_status BOOLEAN DEFAULT FALSE,
 			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 			FOREIGN KEY (from_user_id) REFERENCES users(id) ON DELETE SET NULL,
-			FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE SET NULL
+			FOREIGN KEY (to_user_id) REFERENCES users(id) ON DELETE SET NULL,
+			FOREIGN KEY (parent_id) REFERENCES messages(id) ON DELETE SET NULL
 		)`,
+
+		// Attachments table
+		`CREATE TABLE IF NOT EXISTS attachments (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			message_id INTEGER NOT NULL,
+			filename TEXT NOT NULL,
+			original_name TEXT NOT NULL,
+			content_type TEXT NOT NULL,
+			file_size INTEGER NOT NULL,
+			file_path TEXT,
+			file_data BLOB,
+			created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+			FOREIGN KEY (message_id) REFERENCES messages(id) ON DELETE CASCADE
+		)`,
+
+		// Add new columns to existing messages table (for backward compatibility)
+		`ALTER TABLE messages ADD COLUMN is_html BOOLEAN DEFAULT FALSE`,
+		`ALTER TABLE messages ADD COLUMN thread_id TEXT`,
+		`ALTER TABLE messages ADD COLUMN parent_id INTEGER REFERENCES messages(id) ON DELETE SET NULL`,
 
 		// Indexes for performance
 		`CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)`,
@@ -80,6 +103,9 @@ func (db *DB) migrate() error {
 		`CREATE INDEX IF NOT EXISTS idx_messages_to_user ON messages(to_user_id)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_to_address ON messages(to_address)`,
 		`CREATE INDEX IF NOT EXISTS idx_messages_created_at ON messages(created_at)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_thread_id ON messages(thread_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_messages_parent_id ON messages(parent_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_attachments_message_id ON attachments(message_id)`,
 
 		// Trigger to update updated_at timestamp
 		`CREATE TRIGGER IF NOT EXISTS update_users_updated_at 
@@ -91,6 +117,10 @@ func (db *DB) migrate() error {
 
 	for i, migration := range migrations {
 		if _, err := db.Exec(migration); err != nil {
+			// Ignore column already exists errors for ALTER TABLE statements
+			if i >= 3 && i <= 5 { // ALTER TABLE statements
+				continue
+			}
 			return fmt.Errorf("migration %d failed: %w", i+1, err)
 		}
 	}

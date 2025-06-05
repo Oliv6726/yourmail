@@ -1,4 +1,4 @@
-import { Message } from "@/types/mail";
+import { Message, Attachment } from "@/types/mail";
 
 export interface User {
   id: number;
@@ -25,6 +25,13 @@ export interface SendMessageRequest {
   to: string;
   subject: string;
   body: string;
+  is_html?: boolean;
+  thread_id?: string;
+  parent_id?: number;
+}
+
+export interface SendMessageWithFilesRequest extends SendMessageRequest {
+  attachments?: File[];
 }
 
 export class YourMailAPI {
@@ -251,7 +258,7 @@ export class YourMailAPI {
     }
   }
 
-  // Send a message to another user
+  // Send a message
   async sendMessage(messageData: SendMessageRequest): Promise<{
     success: boolean;
     message: string;
@@ -272,13 +279,155 @@ export class YourMailAPI {
         this.clearToken();
         throw new Error("Authentication expired. Please login again.");
       }
-      const errorText = await response.text();
-      throw new Error(
-        `Failed to send message: ${response.status} - ${errorText}`
-      );
+
+      // Read response body once and try to parse as JSON
+      const responseText = await response.text();
+      try {
+        const errorData = JSON.parse(responseText);
+        if (errorData.message) {
+          throw new Error(`Failed to send message: ${errorData.message}`);
+        } else if (errorData.error) {
+          throw new Error(`Failed to send message: ${errorData.error}`);
+        } else {
+          throw new Error(
+            `Failed to send message: ${JSON.stringify(errorData)}`
+          );
+        }
+      } catch (jsonError) {
+        // If JSON parsing fails, use the raw text
+        throw new Error(`Failed to send message: ${responseText}`);
+      }
     }
 
     return await response.json();
+  }
+
+  // Send a message with file attachments
+  async sendMessageWithFiles(
+    messageData: SendMessageWithFilesRequest
+  ): Promise<{
+    success: boolean;
+    message: string;
+    id?: number;
+  }> {
+    if (!this.token) {
+      throw new Error("Not authenticated. Please login first.");
+    }
+
+    // Create FormData for multipart upload
+    const formData = new FormData();
+    formData.append("to", messageData.to);
+    formData.append("subject", messageData.subject);
+    formData.append("body", messageData.body);
+
+    // Properly convert boolean to string for form data, default to false if undefined
+    formData.append("is_html", messageData.is_html ?? false ? "true" : "false");
+
+    if (messageData.thread_id) {
+      formData.append("thread_id", messageData.thread_id);
+    }
+
+    if (messageData.parent_id) {
+      formData.append("parent_id", messageData.parent_id.toString());
+    }
+
+    // Add file attachments
+    if (messageData.attachments) {
+      messageData.attachments.forEach((file) => {
+        formData.append("attachments", file);
+      });
+    }
+
+    // Create headers without Content-Type (let browser set it for multipart)
+    const headers: Record<string, string> = {};
+    if (this.token) {
+      headers["Authorization"] = `Bearer ${this.token}`;
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/send`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.clearToken();
+        throw new Error("Authentication expired. Please login again.");
+      }
+
+      // Read response body once and try to parse as JSON
+      const responseText = await response.text();
+      try {
+        const errorData = JSON.parse(responseText);
+        if (errorData.message) {
+          throw new Error(`Failed to send message: ${errorData.message}`);
+        } else if (errorData.error) {
+          throw new Error(`Failed to send message: ${errorData.error}`);
+        } else {
+          throw new Error(
+            `Failed to send message: ${JSON.stringify(errorData)}`
+          );
+        }
+      } catch (jsonError) {
+        // If JSON parsing fails, use the raw text
+        throw new Error(`Failed to send message: ${responseText}`);
+      }
+    }
+
+    return await response.json();
+  }
+
+  // Get messages in a thread
+  async getThread(threadId: string): Promise<Message[]> {
+    if (!this.token) {
+      throw new Error("Not authenticated. Please login first.");
+    }
+
+    const response = await fetch(`${this.baseUrl}/api/threads/${threadId}`, {
+      headers: this.getAuthHeaders(),
+    });
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.clearToken();
+        throw new Error("Authentication expired. Please login again.");
+      }
+      throw new Error(`Failed to fetch thread: ${response.status}`);
+    }
+
+    return await response.json();
+  }
+
+  // Get attachment URL for download
+  getAttachmentUrl(attachmentId: number): string {
+    return `${this.baseUrl}/api/attachments/${attachmentId}`;
+  }
+
+  // Download attachment
+  async downloadAttachment(attachmentId: number): Promise<Blob> {
+    if (!this.token) {
+      throw new Error("Not authenticated. Please login first.");
+    }
+
+    const response = await fetch(
+      `${this.baseUrl}/api/attachments/${attachmentId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${this.token}`,
+        },
+      }
+    );
+
+    if (!response.ok) {
+      if (response.status === 401) {
+        this.clearToken();
+        throw new Error("Authentication expired. Please login again.");
+      }
+      throw new Error(`Failed to download attachment: ${response.status}`);
+    }
+
+    return await response.blob();
   }
 
   // Set up Server-Sent Events for real-time inbox updates
