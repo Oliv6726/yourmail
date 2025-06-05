@@ -7,7 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Message } from "@/types/mail";
-import { Mail, MailOpen, Clock } from "lucide-react";
+import { Mail, MailOpen, Clock, MessageCircle } from "lucide-react";
 
 interface MessageListProps {
   messages: Message[];
@@ -78,7 +78,7 @@ export function MessageList({
     <ScrollArea className="h-full">
       <div className="space-y-2 p-4">
         {messages.map((message, index) => (
-          <div key={message.id}>
+          <div key={`${message.id}-${index}`}>
             <Card
               className={`cursor-pointer transition-all hover:shadow-md ${
                 selectedMessageId === message.id ? "ring-2 ring-primary" : ""
@@ -107,6 +107,15 @@ export function MessageList({
                             New
                           </Badge>
                         )}
+                        {message.replies && message.replies.length > 0 && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs flex items-center gap-1"
+                          >
+                            <MessageCircle className="h-3 w-3" />
+                            {message.replies.length}
+                          </Badge>
+                        )}
                       </div>
                       <div className="flex items-center gap-2 text-xs text-muted-foreground flex-shrink-0">
                         <Clock className="h-3 w-3" />
@@ -123,7 +132,16 @@ export function MessageList({
                         isExpanded(message.id) ? "" : "line-clamp-2"
                       }`}
                     >
-                      {message.body}
+                      {message.is_html
+                        ? message.body
+                            .replace(/<[^>]*>/g, "")
+                            .substring(0, isExpanded(message.id) ? 500 : 100)
+                        : message.body.substring(
+                            0,
+                            isExpanded(message.id) ? 500 : 100
+                          )}
+                      {message.body.length >
+                        (isExpanded(message.id) ? 500 : 100) && "..."}
                     </p>
 
                     {message.body.length > 100 && (

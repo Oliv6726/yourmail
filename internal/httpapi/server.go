@@ -1285,20 +1285,87 @@ func (s *Server) notifyNewMessage(message *database.Message) {
 		return // External message, no local recipient to notify
 	}
 
+	// Determine if this is a reply or a new root message
+	isReply := message.ParentID != nil
+
+	// Send appropriate event to direct recipient
 	s.sseMutex.RLock()
 	clients := s.sseClients[*message.ToUserID]
 	s.sseMutex.RUnlock()
 
 	for _, client := range clients {
-		go s.sendSSEEvent(client, "new-message", message)
+		if isReply {
+			// Send as reply event - this won't add to inbox list
+			go s.sendSSEEvent(client, "new-reply", message)
+		} else {
+			// Send as new message event - this will add to inbox list
+			go s.sendSSEEvent(client, "new-message", message)
+		}
 		
-		// Also send updated unread count
+		// Always send updated unread count
 		go func(c *SSEClient) {
 			count, err := s.messageRepo.GetUnreadCount(c.userID)
 			if err == nil {
 				s.sendSSEEvent(c, "unread-count", map[string]int{"count": count})
 			}
 		}(client)
+	}
+
+	// If this is a reply (has thread_id), notify all thread participants
+	if message.ThreadID != nil && *message.ThreadID != "" {
+		go s.notifyThreadUpdate(*message.ThreadID)
+	}
+}
+
+// notifyThreadUpdate notifies all participants in a thread about updates
+func (s *Server) notifyThreadUpdate(threadID string) {
+	log.Printf("DEBUG: Notifying thread update for thread %s", threadID)
+	
+	// Get all messages in the thread
+	threadMessages, err := s.messageRepo.GetThreadByID(threadID)
+	if err != nil {
+		log.Printf("ERROR: Failed to get thread %s for notification: %v", threadID, err)
+		return
+	}
+
+	if len(threadMessages) == 0 {
+		log.Printf("DEBUG: No messages found in thread %s", threadID)
+		return
+	}
+
+	// Find all unique participants in the thread (both senders and receivers)
+	participantIDs := make(map[int]bool)
+	for _, msg := range threadMessages {
+		if msg.FromUserID != nil {
+			participantIDs[*msg.FromUserID] = true
+		}
+		if msg.ToUserID != nil {
+			participantIDs[*msg.ToUserID] = true
+		}
+	}
+
+	log.Printf("DEBUG: Found %d participants in thread %s", len(participantIDs), threadID)
+
+	// Get the root message (first message in chronological order) with updated replies
+	rootMessage := threadMessages[0]
+	if len(threadMessages) > 1 {
+		rootMessage.Replies = threadMessages[1:] // All messages except the first one are replies
+	}
+
+	// Send thread update to all participants
+	s.sseMutex.RLock()
+	defer s.sseMutex.RUnlock()
+
+	for participantID := range participantIDs {
+		clients := s.sseClients[participantID]
+		log.Printf("DEBUG: Sending thread update to user %d (%d clients)", participantID, len(clients))
+		
+		for _, client := range clients {
+			go s.sendSSEEvent(client, "thread-updated", map[string]interface{}{
+				"thread_id": threadID,
+				"message":   rootMessage,
+			})
+		}
 	}
 }
 

@@ -76,8 +76,19 @@ export function MailClient({ user, api, onLogout }: MailClientProps) {
   // Set up real-time updates with Server-Sent Events
   useEffect(() => {
     const handleNewMessage = (message: Message) => {
-      console.log("New message received via SSE:", message);
-      setMessages((prev) => [message, ...prev]);
+      console.log("New root message received via SSE:", message);
+
+      // Only add to inbox if it's a root message (not a reply)
+      setMessages((prev) => {
+        const exists = prev.some(
+          (existingMsg) => existingMsg.id === message.id
+        );
+        if (exists) {
+          console.log("Message already exists, skipping duplicate");
+          return prev;
+        }
+        return [message, ...prev];
+      });
 
       // Show notification if available
       if ("Notification" in window && Notification.permission === "granted") {
@@ -88,13 +99,68 @@ export function MailClient({ user, api, onLogout }: MailClientProps) {
       }
     };
 
+    const handleNewReply = (reply: Message) => {
+      console.log("New reply received via SSE:", reply);
+
+      // Don't add replies to the inbox list - they'll be handled by thread updates
+      // Just show notification if it's for a conversation we're currently viewing
+      if (selectedMessage && selectedMessage.thread_id === reply.thread_id) {
+        // Show notification for replies to current conversation
+        if ("Notification" in window && Notification.permission === "granted") {
+          new Notification(`New reply from ${reply.from}`, {
+            body: reply.subject,
+            icon: "/favicon.ico",
+          });
+        }
+      }
+    };
+
     const handleUnreadCount = (count: number) => {
       console.log("Unread count updated via SSE:", count);
       setUnreadCount(count);
     };
 
+    const handleThreadUpdate = (threadId: string, updatedMessage: Message) => {
+      console.log("Thread updated via SSE:", { threadId, updatedMessage });
+
+      // Create a clean copy of the message without replies for the inbox list
+      // Replies should only be shown in ThreadedMessageView, not in MessageList
+      const messageForInbox = {
+        ...updatedMessage,
+        replies: undefined, // Remove replies from inbox display
+      };
+
+      // Update the messages list to replace the thread root with the updated version
+      setMessages((prev) => {
+        // Check if the message already exists in the list
+        const existingIndex = prev.findIndex(
+          (msg) => msg.thread_id === threadId
+        );
+
+        if (existingIndex >= 0) {
+          // Replace existing message
+          const newMessages = [...prev];
+          newMessages[existingIndex] = messageForInbox;
+          return newMessages;
+        } else {
+          // If message doesn't exist, add it (shouldn't happen normally)
+          return [messageForInbox, ...prev];
+        }
+      });
+
+      // If the currently selected message is part of this thread, update it with full replies
+      if (selectedMessage && selectedMessage.thread_id === threadId) {
+        setSelectedMessage(updatedMessage);
+      }
+    };
+
     try {
-      api.subscribeToInboxUpdates(handleNewMessage, handleUnreadCount);
+      api.subscribeToInboxUpdates(
+        handleNewMessage,
+        handleUnreadCount,
+        handleThreadUpdate,
+        handleNewReply
+      );
       setRealtimeConnected(true);
       console.log("SSE connection established");
     } catch (error) {

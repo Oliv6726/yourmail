@@ -433,7 +433,9 @@ export class YourMailAPI {
   // Set up Server-Sent Events for real-time inbox updates
   subscribeToInboxUpdates(
     onMessage: (message: Message) => void,
-    onUnreadCount: (count: number) => void
+    onUnreadCount: (count: number) => void,
+    onThreadUpdate?: (threadId: string, message: Message) => void,
+    onNewReply?: (reply: Message) => void
   ): void {
     if (!this.token) {
       throw new Error("Not authenticated. Please login first.");
@@ -461,9 +463,34 @@ export class YourMailAPI {
       this.eventSource.addEventListener("new-message", (event) => {
         try {
           const message = JSON.parse(event.data);
+          console.log("New root message received:", message);
           onMessage(message);
         } catch (error) {
           console.error("Failed to parse new message event:", error);
+        }
+      });
+
+      this.eventSource.addEventListener("new-reply", (event) => {
+        try {
+          const reply = JSON.parse(event.data);
+          console.log("New reply received:", reply);
+          if (onNewReply) {
+            onNewReply(reply);
+          }
+        } catch (error) {
+          console.error("Failed to parse new reply event:", error);
+        }
+      });
+
+      this.eventSource.addEventListener("thread-updated", (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          console.log("Received thread update:", data);
+          if (onThreadUpdate && data.thread_id && data.message) {
+            onThreadUpdate(data.thread_id, data.message);
+          }
+        } catch (error) {
+          console.error("Failed to parse thread update event:", error);
         }
       });
 
@@ -497,7 +524,12 @@ export class YourMailAPI {
             this.eventSource?.readyState === EventSource.CLOSED
           ) {
             console.log("Attempting SSE reconnection...");
-            this.subscribeToInboxUpdates(onMessage, onUnreadCount);
+            this.subscribeToInboxUpdates(
+              onMessage,
+              onUnreadCount,
+              onThreadUpdate,
+              onNewReply
+            );
           }
         }, 5000);
       });
@@ -539,5 +571,59 @@ export class YourMailAPI {
       throw new Error("Invalid email format");
     }
     return { username: parts[0], host: parts[1] };
+  }
+
+  // Subscribe to updates for a specific thread
+  subscribeToThreadUpdates(
+    threadId: string,
+    onReply: (reply: Message) => void,
+    onThreadUpdate: (message: Message) => void
+  ): () => void {
+    if (!this.eventSource) {
+      throw new Error("No SSE connection. Call subscribeToInboxUpdates first.");
+    }
+
+    // Add thread-specific listeners to the existing connection
+    const handleNewReply = (event: MessageEvent) => {
+      try {
+        const reply = JSON.parse(event.data);
+        if (reply.thread_id === threadId) {
+          console.log(`New reply received for thread ${threadId}:`, reply);
+          onReply(reply);
+        }
+      } catch (error) {
+        console.error("Failed to parse new reply event:", error);
+      }
+    };
+
+    const handleThreadUpdate = (event: MessageEvent) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.thread_id === threadId && data.message) {
+          console.log(
+            `Thread update received for thread ${threadId}:`,
+            data.message
+          );
+          onThreadUpdate(data.message);
+        }
+      } catch (error) {
+        console.error("Failed to parse thread update event:", error);
+      }
+    };
+
+    // Store references so we can remove them later
+    this.eventSource.addEventListener("new-reply", handleNewReply);
+    this.eventSource.addEventListener("thread-updated", handleThreadUpdate);
+
+    // Return cleanup function
+    return () => {
+      if (this.eventSource) {
+        this.eventSource.removeEventListener("new-reply", handleNewReply);
+        this.eventSource.removeEventListener(
+          "thread-updated",
+          handleThreadUpdate
+        );
+      }
+    };
   }
 }

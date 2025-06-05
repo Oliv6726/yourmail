@@ -25,14 +25,34 @@ func NewMessageRepository(db *DB, attachmentRepo *AttachmentRepository) *Message
 
 // CreateWithThreading creates a new message with threading support
 func (r *MessageRepository) CreateWithThreading(fromUserID, toUserID *int, fromAddress, toAddress, subject, body string, isHTML bool, threadID *string, parentID *int) (*Message, error) {
+	log.Printf("DEBUG: CreateWithThreading called - threadID: %v, parentID: %v", threadID, parentID)
+	
+	// If this is a reply (has parentID), inherit thread_id from parent
+	if parentID != nil && threadID == nil {
+		log.Printf("DEBUG: This is a reply (parentID: %d), looking up parent message for thread_id", *parentID)
+		parentMessage, err := r.GetByID(*parentID)
+		if err != nil {
+			log.Printf("ERROR: Failed to get parent message %d: %v", *parentID, err)
+			return nil, fmt.Errorf("failed to get parent message: %w", err)
+		}
+		if parentMessage != nil && parentMessage.ThreadID != nil {
+			threadID = parentMessage.ThreadID
+			log.Printf("DEBUG: Inherited thread_id from parent: %s", *threadID)
+		}
+	}
+	
 	// Generate thread ID if not provided and this is not a reply
 	if threadID == nil && parentID == nil {
+		log.Printf("DEBUG: Generating new thread_id for root message")
 		id, err := generateThreadID()
 		if err != nil {
 			return nil, fmt.Errorf("failed to generate thread ID: %w", err)
 		}
 		threadID = &id
+		log.Printf("DEBUG: Generated new thread_id: %s", *threadID)
 	}
+
+	log.Printf("DEBUG: Final parameters - threadID: %v, parentID: %v", threadID, parentID)
 
 	query := `
 		INSERT INTO messages (from_user_id, to_user_id, from_address, to_address, subject, body, is_html, thread_id, parent_id, created_at)
@@ -50,7 +70,13 @@ func (r *MessageRepository) CreateWithThreading(fromUserID, toUserID *int, fromA
 		return nil, fmt.Errorf("failed to get message ID: %w", err)
 	}
 
-	return r.GetByID(int(id))
+	createdMessage, err := r.GetByID(int(id))
+	if err != nil {
+		return nil, err
+	}
+	
+	log.Printf("DEBUG: Created message with ID %d, thread_id: %v, parent_id: %v", createdMessage.ID, createdMessage.ThreadID, createdMessage.ParentID)
+	return createdMessage, nil
 }
 
 // Create creates a new message (backward compatibility)

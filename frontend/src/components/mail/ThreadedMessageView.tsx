@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -35,6 +35,47 @@ export function ThreadedMessageView({
   const [expandedMessages, setExpandedMessages] = useState<Set<number>>(
     new Set([message.id])
   );
+  const [currentMessage, setCurrentMessage] = useState<Message>(message);
+
+  // Update currentMessage when prop changes
+  useEffect(() => {
+    setCurrentMessage(message);
+  }, [message]);
+
+  // Subscribe to thread-specific updates
+  useEffect(() => {
+    if (!currentMessage.thread_id) return;
+
+    let cleanup: (() => void) | undefined;
+
+    try {
+      cleanup = api.subscribeToThreadUpdates(
+        currentMessage.thread_id,
+        (reply: Message) => {
+          console.log("New reply received in ThreadedMessageView:", reply);
+          // Add the new reply to current message
+          setCurrentMessage((prev) => ({
+            ...prev,
+            replies: [...(prev.replies || []), reply],
+          }));
+          // Auto-expand the new reply
+          setExpandedMessages((prev) => new Set(prev).add(reply.id));
+        },
+        (updatedMessage: Message) => {
+          console.log("Thread updated in ThreadedMessageView:", updatedMessage);
+          setCurrentMessage(updatedMessage);
+        }
+      );
+    } catch (error) {
+      console.error("Failed to subscribe to thread updates:", error);
+    }
+
+    return () => {
+      if (cleanup) {
+        cleanup();
+      }
+    };
+  }, [currentMessage.thread_id, api]);
 
   const toggleMessage = (messageId: number) => {
     const newExpanded = new Set(expandedMessages);
@@ -46,7 +87,7 @@ export function ThreadedMessageView({
     setExpandedMessages(newExpanded);
   };
 
-  const allMessages = [message, ...(message.replies || [])];
+  const allMessages = [currentMessage, ...(currentMessage.replies || [])];
   const messageCount = allMessages.length;
 
   const formatTime = (timestamp: string) => {
@@ -88,7 +129,7 @@ export function ThreadedMessageView({
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-2 flex-1 min-w-0">
           <h3 className="font-semibold text-base lg:text-lg truncate">
-            {message.subject}
+            {currentMessage.subject}
           </h3>
           {messageCount > 1 && (
             <Badge variant="secondary" className="text-xs flex-shrink-0">
@@ -101,10 +142,10 @@ export function ThreadedMessageView({
             api={api}
             onMessageSent={onMessageSent}
             replyTo={{
-              id: message.id,
-              from: message.from,
-              subject: message.subject,
-              threadId: message.thread_id,
+              id: currentMessage.id,
+              from: currentMessage.from,
+              subject: currentMessage.subject,
+              threadId: currentMessage.thread_id,
             }}
           />
         </div>
