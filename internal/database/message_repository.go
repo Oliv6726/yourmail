@@ -11,12 +11,16 @@ import (
 
 // MessageRepository handles message database operations
 type MessageRepository struct {
-	db *DB
+	db             *DB
+	attachmentRepo *AttachmentRepository
 }
 
 // NewMessageRepository creates a new message repository
-func NewMessageRepository(db *DB) *MessageRepository {
-	return &MessageRepository{db: db}
+func NewMessageRepository(db *DB, attachmentRepo *AttachmentRepository) *MessageRepository {
+	return &MessageRepository{
+		db:             db,
+		attachmentRepo: attachmentRepo,
+	}
 }
 
 // CreateWithThreading creates a new message with threading support
@@ -172,6 +176,17 @@ func (r *MessageRepository) GetThreadByID(threadID string) ([]*Message, error) {
 		messages = append(messages, message)
 	}
 
+	// Load attachments for all messages
+	for _, msg := range messages {
+		attachments, err := r.attachmentRepo.GetByMessageID(msg.ID)
+		if err != nil {
+			log.Printf("Failed to load attachments for message %d: %v", msg.ID, err)
+			// Don't fail the whole request, just log the error
+		} else {
+			msg.Attachments = attachments
+		}
+	}
+
 	return messages, nil
 }
 
@@ -257,14 +272,31 @@ func (r *MessageRepository) GetInboxForUser(userID int, limit, offset int) ([]*M
 
 		// Load replies if this is a thread
 		if msgThreadID.Valid && replyCount > 1 {
+			log.Printf("DEBUG: Loading replies for thread %s (reply count: %d)", msgThreadID.String, replyCount)
 			replies, err := r.GetThreadByID(msgThreadID.String)
 			if err == nil && len(replies) > 1 {
 				// Remove the first message (original) and set the rest as replies
 				message.Replies = replies[1:]
+				log.Printf("DEBUG: Loaded %d replies for message %d", len(message.Replies), message.ID)
+			} else {
+				log.Printf("DEBUG: Failed to load replies for thread %s: err=%v, replies=%d", msgThreadID.String, err, len(replies))
 			}
+		} else {
+			log.Printf("DEBUG: No replies to load for message %d (threadID valid: %t, reply count: %d)", message.ID, msgThreadID.Valid, replyCount)
 		}
 
 		messages = append(messages, message)
+	}
+
+	// Load attachments for all messages
+	for _, msg := range messages {
+		attachments, err := r.attachmentRepo.GetByMessageID(msg.ID)
+		if err != nil {
+			log.Printf("Failed to load attachments for message %d: %v", msg.ID, err)
+			// Don't fail the whole request, just log the error
+		} else {
+			msg.Attachments = attachments
+		}
 	}
 
 	return messages, nil

@@ -46,12 +46,13 @@ type Server struct {
 
 // NewServer creates a new HTTP API server
 func NewServer(cfg *config.Config, db *database.DB, relay *federation.Relay) *Server {
+	attachmentRepo := database.NewAttachmentRepository(db)
 	server := &Server{
 		config:         cfg,
 		db:             db,
 		userRepo:       database.NewUserRepository(db),
-		messageRepo:    database.NewMessageRepository(db),
-		attachmentRepo: database.NewAttachmentRepository(db),
+		messageRepo:    database.NewMessageRepository(db, attachmentRepo),
+		attachmentRepo: attachmentRepo,
 		jwtService:     auth.NewJWTService(cfg.JWTSecret, "yourmail"),
 		relay:          relay,
 		sseClients:     make(map[int][]*SSEClient),

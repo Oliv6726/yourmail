@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Message } from "@/types/mail";
 import { YourMailAPI, type User } from "@/lib/api";
 import { MessageList } from "./MessageList";
+import { ThreadedMessageView } from "./ThreadedMessageView";
 import { ComposeDialog } from "./ComposeDialog";
 import {
   Mail,
@@ -220,7 +221,11 @@ export function MailClient({ user, api, onLogout }: MailClientProps) {
       {/* Main Content */}
       <div className="flex-1 flex flex-col lg:flex-row overflow-hidden">
         {/* Sidebar/Inbox List */}
-        <div className="lg:w-96 lg:border-r flex flex-col">
+        <div
+          className={`lg:w-96 lg:border-r flex flex-col ${
+            selectedMessage ? "hidden lg:flex" : "flex"
+          }`}
+        >
           <div className="p-4 border-b bg-muted/30">
             <div className="flex items-center justify-between">
               <h2 className="font-semibold flex items-center gap-2">
@@ -249,33 +254,11 @@ export function MailClient({ user, api, onLogout }: MailClientProps) {
         {/* Message Detail View (Desktop) */}
         <div className="hidden lg:flex flex-1 flex-col">
           {selectedMessage ? (
-            <div className="h-full flex flex-col">
-              <div className="p-6 border-b bg-muted/30">
-                <h3 className="text-lg font-semibold mb-2">
-                  {selectedMessage.subject || "(No subject)"}
-                </h3>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-2">
-                    <UserIcon className="h-4 w-4" />
-                    <span>From: {selectedMessage.from}</span>
-                  </div>
-                  <div>
-                    {new Date(selectedMessage.timestamp).toLocaleString()}
-                  </div>
-                  {!selectedMessage.read && (
-                    <Badge variant="secondary" className="text-xs">
-                      New
-                    </Badge>
-                  )}
-                </div>
-              </div>
-
-              <div className="flex-1 p-6 overflow-auto">
-                <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                  {selectedMessage.body}
-                </div>
-              </div>
-            </div>
+            <ThreadedMessageView
+              message={selectedMessage}
+              api={api}
+              onMessageSent={handleMessageSent}
+            />
           ) : (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center text-muted-foreground">
@@ -290,6 +273,29 @@ export function MailClient({ user, api, onLogout }: MailClientProps) {
             </div>
           )}
         </div>
+
+        {/* Mobile Message Detail View */}
+        {selectedMessage && (
+          <div className="lg:hidden flex-1 flex flex-col">
+            <div className="flex items-center gap-2 p-4 border-b bg-muted/30">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedMessage(null)}
+              >
+                ← Back
+              </Button>
+              <h2 className="font-semibold truncate flex-1">
+                {selectedMessage.subject || "(No subject)"}
+              </h2>
+            </div>
+            <ThreadedMessageView
+              message={selectedMessage}
+              api={api}
+              onMessageSent={handleMessageSent}
+            />
+          </div>
+        )}
       </div>
 
       {/* Mobile Compose Button */}
